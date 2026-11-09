@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 interface LeaderboardEntry {
   id: string
@@ -53,7 +53,7 @@ export function Leaderboard({ onClose, initialStats }: LeaderboardProps) {
 
   useEffect(() => { void fetchLeaderboard() }, [fetchLeaderboard])
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const name = submitName.trim().replace(/\s+/g, ' ').slice(0, 20)
     if (!name || !initialStats || submitting) return
