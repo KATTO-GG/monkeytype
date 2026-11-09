@@ -72,11 +72,10 @@ function useTypingTest() {
 
     const correct = correctTypedRef.current
     const total = totalTypedRef.current
-    const intervals = timingsRef.current
-    const mean = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0
-    const variance = mean ? intervals.reduce((sum, value) => sum + (value - mean) ** 2, 0) / intervals.length : 0
+    const mean = timingsRef.current.length ? timingsRef.current.reduce((sum, value) => sum + value, 0) / timingsRef.current.length : 0
+    const variance = mean ? timingsRef.current.reduce((sum, value) => sum + (value - mean) ** 2, 0) / timingsRef.current.length : 0
     const result: Stats = {
-      wpm: Math.max(0, Math.round(correct / 5 / elapsedMinutes)),
+      wpm: Math.max(0, Math.round((correct - errorsRef.current) / 5 / elapsedMinutes)),
       rawWpm: Math.round(total / 5 / elapsedMinutes),
       accuracy: total ? Math.round(correct / total * 100) : 100,
       consistency: mean ? Math.max(0, Math.round(100 - Math.sqrt(variance) / mean * 100)) : 0,
@@ -118,14 +117,14 @@ function useTypingTest() {
       if (charIndex > 0) {
         const target = charIndex - 1
         setWords(current => current.map((word, index) => index === wordIndex
-          ? { ...word, chars: word.chars.map((char, charPosition) => charPosition === target ? { ...char, status: 'pending' } : char) }
+          ? { ...word, chars: word.chars.map((char, position) => position === target ? { ...char, status: 'pending' } : char) }
           : word))
         setCharIndex(target)
       } else if (wordIndex > 0) {
         const previousIndex = wordIndex - 1
         const previousLength = words[previousIndex].chars.length
         setWords(current => current.map((word, index) => index === previousIndex
-          ? { ...word, completed: false, chars: word.chars.map((char, charPosition) => charPosition === previousLength - 1 ? { ...char, status: 'pending' } : char) }
+          ? { ...word, completed: false, chars: word.chars.map((char, position) => position === previousLength - 1 ? { ...char, status: 'pending' } : char) }
           : word))
         setWordIndex(previousIndex)
         setCharIndex(Math.max(0, previousLength - 1))
@@ -158,7 +157,7 @@ function useTypingTest() {
     else errorsRef.current += 1
 
     setWords(current => current.map((word, index) => index === wordIndex
-      ? { ...word, chars: word.chars.map((char, charPosition) => charPosition === charIndex ? { ...char, status: correct ? 'correct' : 'incorrect' } : char) }
+      ? { ...word, chars: word.chars.map((char, position) => position === charIndex ? { ...char, status: correct ? 'correct' : 'incorrect' } : char) }
       : word))
     setKeyPresses(current => [...current.slice(-15), { char: key, status: correct ? 'correct' : 'incorrect' }])
     setCharIndex(index => index + 1)
