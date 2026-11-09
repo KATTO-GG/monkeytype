@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { BrowserRouter, Link, Route, Routes, useNavigate } from 'react-router-dom'
 import { LightModeToggle } from './components/LightModeToggle'
 import { PrivacyPage } from './components/PrivacyPage'
@@ -12,6 +12,7 @@ interface WordData { chars: { char: string; status: CharStatus }[]; originalInde
 interface Stats { wpm: number; rawWpm: number; accuracy: number; consistency: number; errors: number; time: number }
 interface KeyPress { char: string; status: 'correct' | 'incorrect' }
 const emptyStats = (): Stats => ({ wpm: 0, rawWpm: 0, accuracy: 100, consistency: 0, errors: 0, time: 0 })
+
 function generateWords(count: number): WordData[] {
   return Array.from({ length: count }, (_, i) => {
     let word = WORDS[Math.floor(Math.random() * WORDS.length)]
@@ -30,153 +31,217 @@ function useTypingTest() {
   const [finalStats, setFinalStats] = useState<Stats | null>(null)
   const [keyPresses, setKeyPresses] = useState<KeyPress[]>([])
   const [showLeaderboard, setShowLeaderboard] = useState(false)
-  const startRef = useRef<number | null>(null)
+
+  const startTimeRef = useRef<number | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const wordsRef = useRef<WordData[]>([])
   const timingsRef = useRef<number[]>([])
-  const lastWordRef = useRef(0)
-  wordsRef.current = words
+  const lastWordTimeRef = useRef(0)
+  const totalTypedRef = useRef(0)
+  const correctTypedRef = useRef(0)
+  const errorsRef = useRef(0)
 
   const restart = useCallback(() => {
-    const next = generateWords(100)
-    wordsRef.current = next
-    setWords(next); setWordIndex(0); setCharIndex(0); setStarted(false); setFinished(false)
-    setStats(emptyStats()); setFinalStats(null); setKeyPresses([]); setShowLeaderboard(false)
-    startRef.current = null; timingsRef.current = []; lastWordRef.current = 0
+    setWords(generateWords(100))
+    setWordIndex(0)
+    setCharIndex(0)
+    setStarted(false)
+    setFinished(false)
+    setStats(emptyStats())
+    setFinalStats(null)
+    setKeyPresses([])
+    setShowLeaderboard(false)
+    startTimeRef.current = null
+    timingsRef.current = []
+    lastWordTimeRef.current = 0
+    totalTypedRef.current = 0
+    correctTypedRef.current = 0
+    errorsRef.current = 0
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = null
   }, [])
 
-  useEffect(() => { restart(); return () => { if (timerRef.current) clearInterval(timerRef.current) } }, [restart])
+  useEffect(() => {
+    restart()
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [restart])
 
-  const calculate = useCallback((source = wordsRef.current, end = Date.now()): Stats | null => {
-    if (!startRef.current) return null
-    const elapsed = (end - startRef.current) / 60000
-    if (elapsed <= 0) return null
-    let correct = 0, incorrect = 0
-    source.forEach(w => w.chars.forEach(c => { if (c.status === 'correct') correct++; else if (c.status === 'incorrect') incorrect++ }))
-    const typed = correct + incorrect
-    const mean = timingsRef.current.length ? timingsRef.current.reduce((a,b) => a+b, 0) / timingsRef.current.length : 0
-    const variance = mean ? timingsRef.current.reduce((a,b) => a + (b-mean) ** 2, 0) / timingsRef.current.length : 0
-    const result = { wpm: Math.max(0, Math.round((correct-incorrect)/5/elapsed)), rawWpm: Math.round(typed/5/elapsed), accuracy: typed ? Math.round(correct/typed*100) : 100, consistency: mean ? Math.max(0, Math.round(100-Math.sqrt(variance)/mean*100)) : 0, errors: incorrect, time: Math.round(elapsed*60) }
+  const calculateStats = useCallback((endTime = Date.now()): Stats | null => {
+    if (startTimeRef.current === null) return null
+    const elapsedMinutes = (endTime - startTimeRef.current) / 60000
+    if (elapsedMinutes <= 0) return null
+
+    const correct = correctTypedRef.current
+    const total = totalTypedRef.current
+    const intervals = timingsRef.current
+    const mean = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0
+    const variance = mean ? intervals.reduce((sum, value) => sum + (value - mean) ** 2, 0) / intervals.length : 0
+    const result: Stats = {
+      wpm: Math.max(0, Math.round(correct / 5 / elapsedMinutes)),
+      rawWpm: Math.round(total / 5 / elapsedMinutes),
+      accuracy: total ? Math.round(correct / total * 100) : 100,
+      consistency: mean ? Math.max(0, Math.round(100 - Math.sqrt(variance) / mean * 100)) : 0,
+      errors: errorsRef.current,
+      time: Math.round(elapsedMinutes * 60),
+    }
     setStats(result)
     return result
   }, [])
 
-  const finish = useCallback((finalWords: WordData[]) => {
+  const finish = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = null
-    setFinished(true)
-    const result = calculate(finalWords)
-    if (result) setFinalStats(result)
-  }, [calculate])
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (finished || !words.length) return
-    const key = e.key
-    const starting = !started && key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey
-    if (starting) {
-      const now = Date.now()
-      startRef.current = now; lastWordRef.current = now; setStarted(true)
-      timerRef.current = setInterval(() => calculate(), 100)
+    const result = calculateStats()
+    if (result) {
+      setStats(result)
+      setFinalStats(result)
     }
-    if (!started && !starting) return
+    setFinished(true)
+  }, [calculateStats])
+
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (finished || !words.length) return
+    const { key } = event
+    const printable = key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey
+
+    if (!started && printable) {
+      const now = Date.now()
+      startTimeRef.current = now
+      lastWordTimeRef.current = now
+      setStarted(true)
+      timerRef.current = setInterval(() => calculateStats(), 100)
+    } else if (!started) {
+      return
+    }
 
     if (key === 'Backspace') {
-      e.preventDefault()
+      event.preventDefault()
       if (charIndex > 0) {
         const target = charIndex - 1
-        setWords(prev => prev.map((w,i) => i === wordIndex ? { ...w, completed: false, chars: w.chars.map((c,j) => j === target ? { ...c, status: 'pending' } : c) } : w))
+        setWords(current => current.map((word, index) => index === wordIndex
+          ? { ...word, chars: word.chars.map((char, charPosition) => charPosition === target ? { ...char, status: 'pending' } : char) }
+          : word))
         setCharIndex(target)
       } else if (wordIndex > 0) {
-        const previous = wordIndex - 1
-        const target = words[previous].chars.length - 1
-        setWords(prev => prev.map((w,i) => i === previous ? { ...w, completed: false, chars: w.chars.map((c,j) => j === target ? { ...c, status: 'pending' } : c) } : w))
-        setWordIndex(previous); setCharIndex(target)
+        const previousIndex = wordIndex - 1
+        const previousLength = words[previousIndex].chars.length
+        setWords(current => current.map((word, index) => index === previousIndex
+          ? { ...word, completed: false, chars: word.chars.map((char, charPosition) => charPosition === previousLength - 1 ? { ...char, status: 'pending' } : char) }
+          : word))
+        setWordIndex(previousIndex)
+        setCharIndex(Math.max(0, previousLength - 1))
       }
       return
     }
 
-    if (key === ' ' ) {
-      e.preventDefault()
-      const current = words[wordIndex]
-      if (current && charIndex === current.chars.length && !current.chars.some(c => c.status === 'incorrect')) {
-        const now = Date.now()
-        timingsRef.current.push(now-lastWordRef.current); lastWordRef.current = now
-        const next = words.map((w,i) => i === wordIndex ? { ...w, completed: true } : w)
-        setWords(next)
-        if (wordIndex === words.length-1) finish(next)
-        else { setWordIndex(wordIndex+1); setCharIndex(0) }
-      }
-      return
-    }
-
-    if (key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return
-    const current = words[wordIndex]
-    if (!current || charIndex >= current.chars.length) return
-    const correct = key === current.chars[charIndex].char
-    const updated = words.map((w,i) => i === wordIndex ? { ...w, chars: w.chars.map((c,j) => j === charIndex ? { ...c, status: correct ? 'correct' as const : 'incorrect' as const } : c) } : w)
-    setWords(updated)
-    setKeyPresses(prev => [...prev.slice(-15), { char: key, status: correct ? 'correct' : 'incorrect' }])
-    setCharIndex(charIndex+1)
-    if (charIndex === current.chars.length-1 && correct && !current.chars.some((c,j) => j !== charIndex && c.status === 'incorrect')) {
+    if (key === ' ') {
+      event.preventDefault()
+      if (charIndex === 0) return
       const now = Date.now()
-      timingsRef.current.push(now-lastWordRef.current); lastWordRef.current = now
-      const completed = updated.map((w,i) => i === wordIndex ? { ...w, completed: true } : w)
-      setWords(completed)
-      if (wordIndex === words.length-1) finish(completed)
-      else { setWordIndex(wordIndex+1); setCharIndex(0) }
+      timingsRef.current.push(now - lastWordTimeRef.current)
+      lastWordTimeRef.current = now
+      setWords(current => current.map((word, index) => index === wordIndex ? { ...word, completed: true } : word))
+      if (wordIndex === words.length - 1) finish()
+      else {
+        setWordIndex(index => index + 1)
+        setCharIndex(0)
+      }
+      return
     }
-  }, [finished, words, started, wordIndex, charIndex, calculate, finish])
+
+    if (!printable) return
+    const currentWord = words[wordIndex]
+    if (!currentWord || charIndex >= currentWord.chars.length) return
+
+    const correct = key === currentWord.chars[charIndex].char
+    totalTypedRef.current += 1
+    if (correct) correctTypedRef.current += 1
+    else errorsRef.current += 1
+
+    setWords(current => current.map((word, index) => index === wordIndex
+      ? { ...word, chars: word.chars.map((char, charPosition) => charPosition === charIndex ? { ...char, status: correct ? 'correct' : 'incorrect' } : char) }
+      : word))
+    setKeyPresses(current => [...current.slice(-15), { char: key, status: correct ? 'correct' : 'incorrect' }])
+    setCharIndex(index => index + 1)
+  }, [finished, words, started, wordIndex, charIndex, calculateStats, finish])
 
   return { words, wordIndex, started, finished, stats, finalStats, keyPresses, showLeaderboard, setShowLeaderboard, handleKeyDown, restart }
 }
 
 function Word({ word, current }: { word: WordData; current: boolean }) {
   return <span className={`word${word.completed ? ' completed' : ''}${current ? ' current' : ''}`}>
-    {word.chars.map((c,i) => <span key={i} className={`char ${c.status}`}>{c.char}</span>)}<span className="space" />
+    {word.chars.map((char, index) => <span key={index} className={`char ${char.status}`}>{char.char}</span>)}<span className="space" />
   </span>
 }
+
 function Stat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
   return <div className="stat"><div className={`stat-value${accent ? ' accent' : ''}`}>{value}</div><div className="stat-label">{label}</div></div>
 }
+
 function StatsPanel({ stats }: { stats: Stats }) {
-  return <div className="stats"><Stat label="WPM" value={stats.wpm} accent /><Stat label="Raw" value={stats.rawWpm} /><Stat label="Acc" value={`${stats.accuracy}%`} /><Stat label="Consistency" value={`${stats.consistency}%`} /></div>
+  return <div className="stats">
+    <Stat label="WPM" value={stats.wpm} accent />
+    <Stat label="Raw" value={stats.rawWpm} />
+    <Stat label="Acc" value={`${stats.accuracy}%`} />
+    <Stat label="Consistency" value={`${stats.consistency}%`} />
+  </div>
 }
+
 function KeyPressIndicator({ presses }: { presses: KeyPress[] }) {
-  return <div className="key-indicator" aria-hidden="true">{presses.map((p,i) => <span key={i} className={p.status === 'correct' ? 'key-correct' : 'key-incorrect'}>{p.char}</span>)}</div>
+  return <div className="key-indicator" aria-hidden="true">
+    {presses.map((press, index) => <span key={index} className={press.status === 'correct' ? 'key-correct' : 'key-incorrect'}>{press.char}</span>)}
+  </div>
 }
+
 function Results({ stats, restart, submit }: { stats: Stats; restart: () => void; submit: () => void }) {
   const navigate = useNavigate()
-  return <div className="results-overlay"><div className="results-panel"><h2>Test Complete</h2><div className="results-stats">
-    <div className="result-stat"><div className="result-value">{stats.wpm}</div><div className="result-label">WPM</div></div>
-    <div className="result-stat"><div className="result-value">{stats.rawWpm}</div><div className="result-label">Raw</div></div>
-    <div className="result-stat"><div className="result-value">{stats.accuracy}%</div><div className="result-label">Accuracy</div></div>
-    <div className="result-stat"><div className="result-value">{stats.consistency}%</div><div className="result-label">Consistency</div></div>
-    <div className="result-stat"><div className="result-value">{stats.errors}</div><div className="result-label">Errors</div></div>
-  </div><button className="restart-btn" onClick={restart}>Restart</button>
-  <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={submit}>Submit score</button>
-  <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={() => navigate('/leaderboard')}>View leaderboard</button>
+  return <div className="results-overlay"><div className="results-panel">
+    <h2>Test Complete</h2>
+    <div className="results-stats">
+      <div className="result-stat"><div className="result-value">{stats.wpm}</div><div className="result-label">WPM</div></div>
+      <div className="result-stat"><div className="result-value">{stats.rawWpm}</div><div className="result-label">Raw</div></div>
+      <div className="result-stat"><div className="result-value">{stats.accuracy}%</div><div className="result-label">Accuracy</div></div>
+      <div className="result-stat"><div className="result-value">{stats.consistency}%</div><div className="result-label">Consistency</div></div>
+      <div className="result-stat"><div className="result-value">{stats.errors}</div><div className="result-label">Errors</div></div>
+    </div>
+    <button className="restart-btn" onClick={restart}>Restart</button>
+    <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={submit}>Submit score</button>
+    <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={() => navigate('/leaderboard')}>View leaderboard</button>
   </div></div>
 }
+
 function TypingTest() {
   const appRef = useRef<HTMLDivElement>(null)
   const { words, wordIndex, started, finished, stats, finalStats, keyPresses, showLeaderboard, setShowLeaderboard, handleKeyDown, restart } = useTypingTest()
   useEffect(() => { appRef.current?.focus() }, [])
   return <div ref={appRef} className="app" onKeyDown={handleKeyDown} onClick={() => appRef.current?.focus()} tabIndex={0}>
-    <header className="header"><div className="logo">Ape Type</div><nav className="header-controls"><LightModeToggle /><Link to="/leaderboard" className="mode-btn">Leaderboard</Link><Link to="/privacy" className="mode-btn">Privacy</Link></nav></header>
-    <main className="main"><StatsPanel stats={stats} /><div className="typing-area">
-      <div className="words-container" role="group" aria-label="Typing area">{words.map(word => <Word key={word.originalIndex} word={word} current={word.originalIndex === wordIndex} />)}</div>
-      <KeyPressIndicator presses={keyPresses} />{!started && !finished && <div className="start-hint">Type to begin</div>}
-    </div></main>
+    <header className="header">
+      <div className="logo">Ape Type</div>
+      <nav className="header-controls"><LightModeToggle /><Link to="/leaderboard" className="mode-btn">Leaderboard</Link><Link to="/privacy" className="mode-btn">Privacy</Link></nav>
+    </header>
+    <main className="main">
+      <StatsPanel stats={stats} />
+      <div className="typing-area">
+        <div className="words-container" role="group" aria-label="Typing area">
+          {words.map(word => <Word key={word.originalIndex} word={word} current={word.originalIndex === wordIndex} />)}
+        </div>
+        <KeyPressIndicator presses={keyPresses} />
+        {!started && !finished && <div className="start-hint">Type to begin</div>}
+      </div>
+    </main>
     {finished && finalStats && <Results stats={finalStats} restart={restart} submit={() => setShowLeaderboard(true)} />}
     {showLeaderboard && finalStats && <Leaderboard onClose={() => setShowLeaderboard(false)} initialStats={{ name: '', wpm: finalStats.wpm, accuracy: finalStats.accuracy, rawWpm: finalStats.rawWpm, consistency: finalStats.consistency }} />}
   </div>
 }
+
 function LeaderboardRoute() {
   const navigate = useNavigate()
   return <Leaderboard onClose={() => navigate('/')} />
 }
+
 export default function App() {
-  return <BrowserRouter><Routes><Route path="/" element={<TypingTest />} /><Route path="/leaderboard" element={<LeaderboardRoute />} /><Route path="/privacy" element={<PrivacyPage />} /></Routes></BrowserRouter>
+  return <BrowserRouter><Routes>
+    <Route path="/" element={<TypingTest />} />
+    <Route path="/leaderboard" element={<LeaderboardRoute />} />
+    <Route path="/privacy" element={<PrivacyPage />} />
+  </Routes></BrowserRouter>
 }
