@@ -3,6 +3,7 @@ import { BrowserRouter, Link, Route, Routes, useNavigate } from 'react-router-do
 import { LightModeToggle } from './components/LightModeToggle'
 import { PrivacyPage } from './components/PrivacyPage'
 import { Leaderboard } from './components/Leaderboard'
+import { consistencyFromTimestamps, startSession, type Submission, type TestMode } from './anticheat'
 import './App.css'
 import './typing.css'
 
@@ -12,7 +13,7 @@ const MAX_EXTRA = 19
 
 interface Stats { wpm: number; rawWpm: number; accuracy: number; consistency: number; errors: number; time: number }
 interface KeyPress { char: string; status: 'correct' | 'incorrect' }
-type Mode = { kind: 'time' | 'words'; value: number }
+type Mode = TestMode
 type Phase = 'idle' | 'running' | 'done'
 type WordStatus = 'upcoming' | 'current' | 'done'
 
@@ -47,6 +48,7 @@ function useTypingTest() {
   const [finished, setFinished] = useState(false)
   const [stats, setStats] = useState<Stats>(emptyStats)
   const [finalStats, setFinalStats] = useState<Stats | null>(null)
+  const [submission, setSubmission] = useState<Submission | null>(null)
   const [keyPresses, setKeyPresses] = useState<KeyPress[]>([])
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [timeLeft, setTimeLeft] = useState(DEFAULT_MODE.value)
@@ -63,6 +65,8 @@ function useTypingTest() {
   const charCountRef = useRef(0)
   const samplesRef = useRef<number[]>([])
   const sampleMarkRef = useRef({ second: 0, chars: 0 })
+  const tsRef = useRef<number[]>([])
+  const sessionRef = useRef<Promise<string | null> | null>(null)
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current)
@@ -112,8 +116,19 @@ function useTypingTest() {
     phaseRef.current = 'done'
     stopTimer()
     const current = modeRef.current
-    const elapsed = current.kind === 'time' ? current.value * 1000 : Date.now() - startRef.current
+    const elapsed = current.kind === 'time' ? current.value * 1000 : Math.round(Date.now() - startRef.current)
     const result = compute(elapsed)
+    const timestamps = tsRef.current.slice()
+    result.consistency = consistencyFromTimestamps(timestamps, elapsed, current.kind)
+    const typedNow = typedRef.current.slice()
+    setSubmission({
+      token: sessionRef.current ?? Promise.resolve(null),
+      mode: current,
+      words: wordsRef.current.slice(0, typedNow.length),
+      typed: typedNow,
+      ts: timestamps,
+      elapsedMs: elapsed,
+    })
     setStats(result)
     setFinalStats(result)
     setFinished(true)
@@ -139,6 +154,7 @@ function useTypingTest() {
   const begin = useCallback(() => {
     phaseRef.current = 'running'
     startRef.current = Date.now()
+    sessionRef.current = startSession(modeRef.current)
     setStarted(true)
     timerRef.current = setInterval(tick, 100)
   }, [tick])
@@ -157,6 +173,8 @@ function useTypingTest() {
     charCountRef.current = 0
     samplesRef.current = []
     sampleMarkRef.current = { second: 0, chars: 0 }
+    tsRef.current = []
+    sessionRef.current = null
     setMode(nextMode)
     setWords(initial)
     setTyped([''])
@@ -164,6 +182,7 @@ function useTypingTest() {
     setFinished(false)
     setStats(emptyStats())
     setFinalStats(null)
+    setSubmission(null)
     setKeyPresses([])
     setShowLeaderboard(false)
     setTimeLeft(nextMode.kind === 'time' ? nextMode.value : 0)
@@ -177,11 +196,13 @@ function useTypingTest() {
   const registerKey = useCallback((ok: boolean) => {
     totalKeysRef.current += 1
     charCountRef.current += 1
+    tsRef.current.push(Math.round(Date.now() - startRef.current))
     if (ok) correctKeysRef.current += 1
     else errorsRef.current += 1
   }, [])
 
   const handleKey = useCallback((event: KeyboardEvent) => {
+    if (!event.isTrusted) return
     const el = event.target as HTMLElement | null
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
     const { key } = event
@@ -197,6 +218,7 @@ function useTypingTest() {
     if (!printable && key !== 'Backspace') return
     if (el && (el.tagName === 'BUTTON' || el.tagName === 'A')) el.blur()
     event.preventDefault()
+    if (printable && event.repeat) return
 
     if (phaseRef.current === 'idle') {
       if (!printable) return
@@ -243,7 +265,7 @@ function useTypingTest() {
     if (completed) finish()
   }, [begin, finish, registerKey, restart])
 
-  return { mode, words, typed, started, finished, stats, finalStats, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart }
+  return { mode, words, typed, started, finished, stats, finalStats, submission, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart }
 }
 
 const Word = memo(function Word({ target, typed, status }: { target: string; typed: string; status: WordStatus }) {
@@ -303,7 +325,7 @@ function Results({ stats, restart, submit }: { stats: Stats; restart: () => void
 }
 
 function TypingTest() {
-  const { mode, words, typed, started, finished, stats, finalStats, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart } = useTypingTest()
+  const { mode, words, typed, started, finished, stats, finalStats, submission, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart } = useTypingTest()
   const innerRef = useRef<HTMLDivElement>(null)
   const [offset, setOffset] = useState(0)
   const wordIndex = Math.max(0, Math.min(typed.length - 1, words.length - 1))
@@ -354,7 +376,7 @@ function TypingTest() {
       </div>
     </main>
     {finished && finalStats && <Results stats={finalStats} restart={() => restart()} submit={() => setShowLeaderboard(true)} />}
-    {showLeaderboard && finalStats && <Leaderboard onClose={() => setShowLeaderboard(false)} initialStats={{ name: '', wpm: finalStats.wpm, accuracy: finalStats.accuracy, rawWpm: finalStats.rawWpm, consistency: finalStats.consistency }} />}
+    {showLeaderboard && finalStats && <Leaderboard onClose={() => setShowLeaderboard(false)} initialStats={{ name: '', wpm: finalStats.wpm, accuracy: finalStats.accuracy, rawWpm: finalStats.rawWpm, consistency: finalStats.consistency, submission: submission ?? undefined }} />}
   </div>
 }
 

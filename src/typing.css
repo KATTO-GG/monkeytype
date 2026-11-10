@@ -1,5 +1,42 @@
 /* Monkeytype-style typing area: 3-line window, left aligned, bar caret, extra/missing chars */
 
+/* Theme toggle: explicit data-theme beats OS preference */
+:root[data-theme='dark'] {
+  --bg: #1e1e2e;
+  --bg-secondary: #252538;
+  --fg: #cdd6f4;
+  --fg-muted: #6c7086;
+  --accent: #89b4fa;
+  --accent-dim: rgba(137, 180, 250, 0.3);
+  --correct: #a6e3a1;
+  --incorrect: #f38ba8;
+  --current: #f9e2af;
+  --completed: #6c7086;
+  --border: #313244;
+  --shadow: rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme='light'] {
+  --bg: #eff1f5;
+  --bg-secondary: #e6e9ef;
+  --fg: #4c4f69;
+  --fg-muted: #8c8fa1;
+  --accent: #1e66f5;
+  --accent-dim: rgba(30, 102, 245, 0.2);
+  --correct: #40a02b;
+  --incorrect: #d20f39;
+  --current: #df8e1d;
+  --completed: #8c8fa1;
+  --border: #ccd0da;
+  --shadow: rgba(0, 0, 0, 0.1);
+}
+
+/* Scrollable pages (privacy policy) */
+body.scroll-page { overflow-y: auto; }
+.app.scroll-page { height: auto; min-height: 100vh; }
+.app.scroll-page .main { flex: none; display: block; padding: 24px 0 64px; }
+.app.scroll-page .privacy-container { margin: 0 auto; }
+
 .mode-bar {
   display: flex;
   flex-wrap: wrap;

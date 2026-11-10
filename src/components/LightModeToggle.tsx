@@ -7,24 +7,16 @@ export function LightModeToggle() {
   useEffect(() => {
     setMounted(true)
     const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches
-    const saved = localStorage.getItem('theme')
-    if (saved !== null) {
-      setIsLight(saved === 'light')
-    } else {
-      setIsLight(prefersLight)
-    }
+    let saved: string | null = null
+    try { saved = localStorage.getItem('theme') } catch { /* storage unavailable */ }
+    setIsLight(saved !== null ? saved === 'light' : prefersLight)
   }, [])
 
   useEffect(() => {
     if (!mounted) return
-    const root = document.documentElement
-    if (isLight) {
-      root.setAttribute('data-theme', 'light')
-      localStorage.setItem('theme', 'light')
-    } else {
-      root.removeAttribute('data-theme')
-      localStorage.setItem('theme', 'dark')
-    }
+    const theme = isLight ? 'light' : 'dark'
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('theme', theme) } catch { /* storage unavailable */ }
   }, [isLight, mounted])
 
   if (!mounted) return <div className="mode-btn" aria-hidden="true">Theme</div>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { API_BASE, type Submission } from '../anticheat'
 
 interface LeaderboardEntry {
   id: string
@@ -16,9 +17,8 @@ interface SubmitScoreData {
   accuracy: number
   rawWpm: number
   consistency: number
+  submission?: Submission
 }
-
-const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 interface LeaderboardProps {
   onClose: () => void
@@ -30,6 +30,7 @@ export function Leaderboard({ onClose, initialStats }: LeaderboardProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
   const [showSubmit, setShowSubmit] = useState(Boolean(initialStats))
   const [submitName, setSubmitName] = useState(() => {
     try { return localStorage.getItem('leaderboardName') || '' } catch { return '' }
@@ -61,15 +62,29 @@ export function Leaderboard({ onClose, initialStats }: LeaderboardProps) {
     setSubmitting(true)
     setError(null)
     try {
+      const { submission, ...score } = initialStats
+      const token = submission ? await submission.token : null
+      if (!submission || !token) throw new Error('Anti-cheat session missing. Retake the test to submit.')
+
       const response = await fetch(`${API_BASE}/api/leaderboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...initialStats, name }),
+        body: JSON.stringify({
+          ...score,
+          name,
+          token,
+          mode: submission.mode,
+          words: submission.words,
+          typed: submission.typed,
+          ts: submission.ts,
+          elapsedMs: submission.elapsedMs,
+        }),
       })
       const result = await response.json().catch(() => null)
       if (!response.ok) throw new Error(result?.error || 'Score submission failed')
 
       try { localStorage.setItem('leaderboardName', name) } catch { /* Storage may be unavailable */ }
+      setSubmitted(true)
       setShowSubmit(false)
       setSubmitName(name)
       await fetchLeaderboard()
@@ -138,7 +153,7 @@ export function Leaderboard({ onClose, initialStats }: LeaderboardProps) {
         )}
 
         {error && showSubmit && <p className="error" role="alert">{error}</p>}
-        {!showSubmit && initialStats && (
+        {!showSubmit && initialStats && !submitted && (
           <button className="submit-btn" onClick={() => { setError(null); setShowSubmit(true) }}>Submit score</button>
         )}
         <p className="privacy-link"><a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>
