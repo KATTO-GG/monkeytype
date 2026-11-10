@@ -1,0 +1,91 @@
+/* Monkeytype-style typing area: 3-line window, left aligned, bar caret, extra/missing chars */
+
+.mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.mode-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.progress {
+  align-self: flex-start;
+  padding-left: 8px;
+  min-height: 1.4em;
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.words-container {
+  display: block;
+  min-height: 0;
+  padding: 24px 40px;
+  overflow: hidden;
+}
+
+.words-window {
+  --fs: 28px;
+  --lh: 2.8;
+  font-size: var(--fs);
+  line-height: var(--lh);
+  height: calc(var(--fs) * var(--lh) * 3);
+  overflow: hidden;
+}
+
+.words-inner {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: baseline;
+  align-content: flex-start;
+  transition: transform 0.12s ease;
+}
+
+.space {
+  width: 0.6em;
+}
+
+.char.missing {
+  color: var(--incorrect);
+  opacity: 0.5;
+}
+
+.char.extra {
+  opacity: 0.8;
+}
+
+.word.error .char {
+  text-decoration: underline;
+  text-decoration-color: var(--incorrect);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}
+
+.char.caret-before::before,
+.char.caret-after::after {
+  content: '';
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  width: 2px;
+  background: var(--current);
+  border-radius: 1px;
+  animation: caretBlink 1s ease-in-out infinite;
+}
+
+.char.caret-before::before { left: -1px; }
+.char.caret-after::after { right: -1px; }
+
+@media (max-width: 600px) {
+  .words-container { padding: 12px 16px; }
+  .words-window { --fs: 18px; --lh: 2; }
+  .progress { font-size: 20px; }
+}
