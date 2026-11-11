@@ -3,13 +3,16 @@ import { BrowserRouter, Link, Route, Routes, useNavigate } from 'react-router-do
 import { LightModeToggle } from './components/LightModeToggle'
 import { PrivacyPage } from './components/PrivacyPage'
 import { Leaderboard } from './components/Leaderboard'
+import { BookPicker } from './components/BookPicker'
 import { consistencyFromTimestamps, startSession, type Submission, type TestMode } from './anticheat'
+import { customWords, fetchBookWords, loadSavedSource, readPos, saveSource, writePos, type Source } from './books'
 import './App.css'
 import './typing.css'
 
 const WORDS = 'the be to of and a in that have I it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us'.split(' ')
 const PUNCTUATION = ['.', ',', ';', ':', '!', '?']
 const MAX_EXTRA = 19
+const MAX_VISIBLE_EXTRA = 4
 
 interface Stats { wpm: number; rawWpm: number; accuracy: number; consistency: number; errors: number; time: number }
 interface KeyPress { char: string; status: 'correct' | 'incorrect' }
@@ -26,6 +29,7 @@ const MODES: Mode[] = [
   { kind: 'words', value: 50 },
 ]
 const DEFAULT_MODE: Mode = { kind: 'time', value: 30 }
+const RANDOM_SOURCE: Source = { kind: 'random' }
 const emptyStats = (): Stats => ({ wpm: 0, rawWpm: 0, accuracy: 100, consistency: 0, errors: 0, time: 0 })
 
 function randomWords(count: number, previous = ''): string[] {
@@ -42,6 +46,10 @@ function randomWords(count: number, previous = ''): string[] {
 
 function useTypingTest() {
   const [mode, setMode] = useState<Mode>(DEFAULT_MODE)
+  const [source, setSource] = useState<Source>(RANDOM_SOURCE)
+  const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceError, setSourceError] = useState<string | null>(null)
+  const [bookProgress, setBookProgress] = useState<{ pos: number; total: number } | null>(null)
   const [words, setWords] = useState<string[]>([])
   const [typed, setTyped] = useState<string[]>([''])
   const [started, setStarted] = useState(false)
@@ -54,6 +62,11 @@ function useTypingTest() {
   const [timeLeft, setTimeLeft] = useState(DEFAULT_MODE.value)
 
   const modeRef = useRef<Mode>(DEFAULT_MODE)
+  const sourceRef = useRef<Source>(RANDOM_SOURCE)
+  const bookWordsRef = useRef<string[]>([])
+  const cursorRef = useRef(0)
+  const startPosRef = useRef(0)
+  const blockedRef = useRef(false)
   const wordsRef = useRef<string[]>([])
   const typedRef = useRef<string[]>([''])
   const phaseRef = useRef<Phase>('idle')
@@ -68,9 +81,25 @@ function useTypingTest() {
   const tsRef = useRef<number[]>([])
   const sessionRef = useRef<Promise<string | null> | null>(null)
 
+  const setBlocked = useCallback((value: boolean) => { blockedRef.current = value }, [])
+
   const stopTimer = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = null
+  }, [])
+
+  // Next words come from the active book (looping at the end) or from the random word list.
+  const pullWords = useCallback((count: number, previous = ''): string[] => {
+    const book = bookWordsRef.current
+    if (sourceRef.current.kind === 'book' && book.length > 0) {
+      const result: string[] = []
+      for (let i = 0; i < count; i++) {
+        result.push(book[cursorRef.current % book.length])
+        cursorRef.current += 1
+      }
+      return result
+    }
+    return randomWords(count, previous)
   }, [])
 
   const compute = useCallback((elapsedMs: number): Stats => {
@@ -121,6 +150,8 @@ function useTypingTest() {
     const timestamps = tsRef.current.slice()
     result.consistency = consistencyFromTimestamps(timestamps, elapsed, current.kind)
     const typedNow = typedRef.current.slice()
+    const activeSource = sourceRef.current
+    if (activeSource.kind === 'book') writePos(activeSource.id, startPosRef.current + Math.max(0, typedNow.length - 1))
     setSubmission({
       token: sessionRef.current ?? Promise.resolve(null),
       mode: current,
@@ -154,17 +185,27 @@ function useTypingTest() {
   const begin = useCallback(() => {
     phaseRef.current = 'running'
     startRef.current = Date.now()
-    sessionRef.current = startSession(modeRef.current)
+    // Only random-word tests can be ranked, so only they get an anti-cheat session
+    sessionRef.current = sourceRef.current.kind === 'random' ? startSession(modeRef.current) : null
     setStarted(true)
     timerRef.current = setInterval(tick, 100)
   }, [tick])
 
-  const restart = useCallback((next?: Mode) => {
+  const restart = useCallback((next?: Mode, nextSource?: Source) => {
     const nextMode = next ?? modeRef.current
+    const nextSrc = nextSource ?? sourceRef.current
     stopTimer()
     modeRef.current = nextMode
+    sourceRef.current = nextSrc
     phaseRef.current = 'idle'
-    const initial = randomWords(nextMode.kind === 'words' ? nextMode.value : 100)
+    if (nextSrc.kind === 'book') {
+      const total = Math.max(1, bookWordsRef.current.length)
+      cursorRef.current = readPos(nextSrc.id) % total
+    } else {
+      cursorRef.current = 0
+    }
+    startPosRef.current = cursorRef.current
+    const initial = pullWords(nextMode.kind === 'words' ? nextMode.value : 100)
     wordsRef.current = initial
     typedRef.current = ['']
     totalKeysRef.current = 0
@@ -176,6 +217,8 @@ function useTypingTest() {
     tsRef.current = []
     sessionRef.current = null
     setMode(nextMode)
+    setSource(nextSrc)
+    setBookProgress(nextSrc.kind === 'book' ? { pos: startPosRef.current, total: bookWordsRef.current.length } : null)
     setWords(initial)
     setTyped([''])
     setStarted(false)
@@ -186,12 +229,39 @@ function useTypingTest() {
     setKeyPresses([])
     setShowLeaderboard(false)
     setTimeLeft(nextMode.kind === 'time' ? nextMode.value : 0)
-  }, [stopTimer])
+  }, [pullWords, stopTimer])
+
+  const chooseSource = useCallback(async (next: Source) => {
+    setSourceError(null)
+    if (next.kind === 'random') {
+      bookWordsRef.current = []
+      saveSource(next)
+      restart(undefined, next)
+      return
+    }
+    setSourceLoading(true)
+    try {
+      const bookWords = next.custom ? customWords(next.id) : await fetchBookWords(next.id)
+      if (!bookWords || bookWords.length < 20) throw new Error('Text not found')
+      bookWordsRef.current = bookWords
+      saveSource(next)
+      restart(undefined, next)
+    } catch (cause) {
+      setSourceError(cause instanceof Error ? cause.message : 'Could not load book')
+    } finally {
+      setSourceLoading(false)
+    }
+  }, [restart])
 
   useEffect(() => {
     restart()
     return stopTimer
   }, [restart, stopTimer])
+
+  useEffect(() => {
+    const saved = loadSavedSource()
+    if (saved) void chooseSource(saved)
+  }, [chooseSource])
 
   const registerKey = useCallback((ok: boolean) => {
     totalKeysRef.current += 1
@@ -202,7 +272,7 @@ function useTypingTest() {
   }, [])
 
   const handleKey = useCallback((event: KeyboardEvent) => {
-    if (!event.isTrusted) return
+    if (!event.isTrusted || blockedRef.current) return
     const el = event.target as HTMLElement | null
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
     const { key } = event
@@ -248,7 +318,7 @@ function useTypingTest() {
       if (index >= targets.length - 1) {
         completed = true
       } else if (modeRef.current.kind === 'time' && current.length > targets.length - 40) {
-        wordsRef.current = [...targets, ...randomWords(60, targets[targets.length - 1])]
+        wordsRef.current = [...targets, ...pullWords(60, targets[targets.length - 1])]
         setWords(wordsRef.current)
       }
     } else {
@@ -263,17 +333,22 @@ function useTypingTest() {
     typedRef.current = current
     setTyped(current)
     if (completed) finish()
-  }, [begin, finish, registerKey, restart])
+  }, [begin, finish, pullWords, registerKey, restart])
 
-  return { mode, words, typed, started, finished, stats, finalStats, submission, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart }
+  return {
+    mode, source, sourceLoading, sourceError, bookProgress, words, typed, started, finished, stats, finalStats, submission,
+    keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, setBlocked, chooseSource, handleKey, restart,
+  }
 }
 
 const Word = memo(function Word({ target, typed, status }: { target: string; typed: string; status: WordStatus }) {
-  const length = Math.max(target.length, typed.length)
+  // Extra chars are drawn in a zero-width overlay so a mistake never changes the word width or line wrapping
+  const visibleLength = Math.max(target.length, Math.min(typed.length, target.length + MAX_VISIBLE_EXTRA))
   const caretBefore = status === 'current' && typed.length < target.length ? typed.length : -1
-  const caretAfter = status === 'current' && typed.length >= target.length ? length - 1 : -1
+  const caretAfter = status === 'current' && typed.length >= target.length ? visibleLength - 1 : -1
   const chars = []
-  for (let i = 0; i < length; i++) {
+  const extras = []
+  for (let i = 0; i < visibleLength; i++) {
     const expected = target[i]
     const got = typed[i]
     let state: string
@@ -282,10 +357,12 @@ const Word = memo(function Word({ target, typed, status }: { target: string; typ
     else state = got === expected ? 'correct' : 'incorrect'
     if (i === caretBefore) state += ' caret-before'
     if (i === caretAfter) state += ' caret-after'
-    chars.push(<span key={i} className={`char ${state}`}>{expected ?? got}</span>)
+    const node = <span key={i} className={`char ${state}`}>{expected ?? got}</span>
+    if (expected === undefined) extras.push(node)
+    else chars.push(node)
   }
   const error = status === 'done' && typed !== target
-  return <span className={`word ${status}${error ? ' error' : ''}`}>{chars}<span className="space" /></span>
+  return <span className={`word ${status}${error ? ' error' : ''}`}>{chars}{extras.length > 0 && <span className="extras" aria-hidden="true">{extras}</span>}<span className="space" /></span>
 })
 
 function Stat({ label, value, accent }: { label: string; value: string | number; accent?: boolean }) {
@@ -307,8 +384,9 @@ function KeyPressIndicator({ presses }: { presses: KeyPress[] }) {
   </div>
 }
 
-function Results({ stats, restart, submit }: { stats: Stats; restart: () => void; submit: () => void }) {
+function Results({ stats, canSubmit, restart, submit }: { stats: Stats; canSubmit: boolean; restart: () => void; submit: () => void }) {
   const navigate = useNavigate()
+  const secondary = { marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }
   return <div className="results-overlay"><div className="results-panel">
     <h2>Test Complete</h2>
     <div className="results-stats">
@@ -318,22 +396,30 @@ function Results({ stats, restart, submit }: { stats: Stats; restart: () => void
       <div className="result-stat"><div className="result-value">{stats.consistency}%</div><div className="result-label">Consistency</div></div>
       <div className="result-stat"><div className="result-value">{stats.errors}</div><div className="result-label">Errors</div></div>
     </div>
-    <button className="restart-btn" onClick={restart}>Restart</button>
-    <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={submit}>Submit score</button>
-    <button className="restart-btn" style={{ marginTop: 12, background: 'var(--bg)', color: 'var(--fg)', border: '1px solid var(--border)' }} onClick={() => navigate('/leaderboard')}>View leaderboard</button>
+    <button className="restart-btn" onClick={restart}>{canSubmit ? 'Restart' : 'Next passage'}</button>
+    {canSubmit
+      ? <button className="restart-btn" style={secondary} onClick={submit}>Submit score</button>
+      : <p className="book-note">Book and imported-text tests are not ranked.</p>}
+    <button className="restart-btn" style={secondary} onClick={() => navigate('/leaderboard')}>View leaderboard</button>
   </div></div>
 }
 
 function TypingTest() {
-  const { mode, words, typed, started, finished, stats, finalStats, submission, keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, handleKey, restart } = useTypingTest()
+  const {
+    mode, source, sourceLoading, sourceError, bookProgress, words, typed, started, finished, stats, finalStats, submission,
+    keyPresses, timeLeft, showLeaderboard, setShowLeaderboard, setBlocked, chooseSource, handleKey, restart,
+  } = useTypingTest()
   const innerRef = useRef<HTMLDivElement>(null)
   const [offset, setOffset] = useState(0)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const wordIndex = Math.max(0, Math.min(typed.length - 1, words.length - 1))
 
   useEffect(() => {
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [handleKey])
+
+  useEffect(() => { setBlocked(pickerOpen) }, [pickerOpen, setBlocked])
 
   const updateOffset = useCallback(() => {
     const el = innerRef.current?.children[wordIndex] as HTMLElement | undefined
@@ -348,18 +434,35 @@ function TypingTest() {
   }, [updateOffset])
 
   const wordStatus = (index: number): WordStatus => index < typed.length - 1 ? 'done' : index === typed.length - 1 ? 'current' : 'upcoming'
+  const hidden = started || finished ? 'hidden' : 'visible'
+  const activeId = source.kind === 'book' ? source.id : null
 
   return <div className="app">
     <header className="header">
       <div className="logo">Ape Type</div>
-      <nav className="header-controls"><LightModeToggle /><Link to="/leaderboard" className="mode-btn">Leaderboard</Link><Link to="/privacy" className="mode-btn">Privacy</Link></nav>
+      <nav className="header-controls">
+        <LightModeToggle />
+        <button className="mode-btn" onClick={() => setPickerOpen(true)}>Books</button>
+        <Link to="/leaderboard" className="mode-btn">Leaderboard</Link>
+        <Link to="/privacy" className="mode-btn">Privacy</Link>
+      </nav>
     </header>
     <main className="main">
-      <div className="mode-bar" style={{ visibility: started || finished ? 'hidden' : 'visible' }}>
+      <div className="mode-bar" style={{ visibility: hidden }}>
         {MODES.map(option => {
           const active = option.kind === mode.kind && option.value === mode.value
           return <button key={`${option.kind}-${option.value}`} className={`mode-btn${active ? ' active' : ''}`} onClick={() => restart(option)}>{option.kind === 'time' ? `${option.value}s` : `${option.value} words`}</button>
         })}
+      </div>
+      <div className="book-bar" style={{ visibility: hidden }}>
+        {source.kind === 'book'
+          ? <>
+            <span>Typing: {source.title}{bookProgress ? ` (word ${bookProgress.pos.toLocaleString()} of ${bookProgress.total.toLocaleString()})` : ''}</span>
+            <button className="mode-btn" onClick={() => void chooseSource({ kind: 'random' })}>Random words</button>
+          </>
+          : <button className="mode-btn" onClick={() => setPickerOpen(true)}>Type a book or your own text</button>}
+        {sourceLoading && <span>Loading...</span>}
+        {sourceError && <span className="book-error">{sourceError}</span>}
       </div>
       <StatsPanel stats={stats} />
       <div className="typing-area">
@@ -375,7 +478,14 @@ function TypingTest() {
         {!started && !finished && <div className="start-hint">Type to begin</div>}
       </div>
     </main>
-    {finished && finalStats && <Results stats={finalStats} restart={() => restart()} submit={() => setShowLeaderboard(true)} />}
+    {pickerOpen && <BookPicker
+      activeId={activeId}
+      onClose={() => setPickerOpen(false)}
+      onPick={next => { setPickerOpen(false); void chooseSource(next) }}
+      onRandom={() => { setPickerOpen(false); void chooseSource({ kind: 'random' }) }}
+      onRemoved={id => { if (source.kind === 'book' && source.id === id) void chooseSource({ kind: 'random' }) }}
+    />}
+    {finished && finalStats && <Results stats={finalStats} canSubmit={source.kind === 'random'} restart={() => restart()} submit={() => setShowLeaderboard(true)} />}
     {showLeaderboard && finalStats && <Leaderboard onClose={() => setShowLeaderboard(false)} initialStats={{ name: '', wpm: finalStats.wpm, accuracy: finalStats.accuracy, rawWpm: finalStats.rawWpm, consistency: finalStats.consistency, submission: submission ?? undefined }} />}
   </div>
 }

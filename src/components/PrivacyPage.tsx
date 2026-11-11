@@ -30,7 +30,7 @@ export function PrivacyPage() {
               Ape Type collects minimal data to provide the typing test service:
             </p>
             <ul>
-              <li><strong>Local settings:</strong> your theme and the last leaderboard name you used are stored in your browser (localStorage). Nothing else is stored locally.</li>
+              <li><strong>Local settings:</strong> your theme, the last leaderboard name you used, your selected book, your place in each book, and any texts you import are stored in your browser (localStorage). Imported texts never leave your browser.</li>
               <li><strong>Leaderboard entries:</strong> when you submit a score, we store your display name, WPM, accuracy, raw WPM, consistency, and a timestamp on our backend.</li>
               <li><strong>Anti-cheat data:</strong> when you submit a score, your browser also sends the words used in that test, what you typed, and the time offset of each keystroke. This is used only to verify the score and is not stored after verification.</li>
               <li><strong>Technical data:</strong> IP address and request metadata, standard web server logs handled by Cloudflare.</li>
@@ -55,7 +55,7 @@ export function PrivacyPage() {
               <li>Each test is tied to a one-time signed session issued when you start typing. A score can only be submitted once, and only after the test could really have finished.</li>
               <li>The server recalculates your WPM and raw WPM from the submitted words, your typed text, and your keystroke timing, and rejects scores that do not match.</li>
               <li>Keystroke timing is checked for inhuman speed or machine-like regularity. Held-down keys and scripted (non-trusted) key events are ignored.</li>
-              <li>Test words must come from the built-in word list.</li>
+              <li>Test words must come from the built-in word list. Book and imported-text tests are not ranked.</li>
               <li>Submissions are rate limited per network address. We store only a one-way hash of your IP address for this, and it expires after one minute.</li>
             </ul>
             <p>
@@ -76,7 +76,8 @@ export function PrivacyPage() {
             <h2>5. Third Parties</h2>
             <p>
               We use Cloudflare for hosting and DDoS protection. Cloudflare may process your IP address and connection metadata.
-              Fonts are loaded from Google Fonts. No analytics trackers or advertising networks are embedded.
+              Classic book texts are public domain and are fetched from Project Gutenberg through our server. Fonts are loaded from Google Fonts.
+              No analytics trackers or advertising networks are embedded.
             </p>
           </section>
 
