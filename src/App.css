@@ -526,27 +526,41 @@ body {
 
 .char.correct {
   color: var(--correct);
-  animation: charSlideIn 0.06s ease-out forwards;
+  animation: charPopIn 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .char.incorrect {
   color: var(--incorrect);
-  animation: charSlideIn 0.06s ease-out forwards, mistakeFlash 0.15s ease-out;
+  animation: charPopIn 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards, mistakeFlash 0.2s ease-out;
+  position: relative;
+}
+
+.char.incorrect::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--incorrect);
+  animation: ripple 0.4s ease-out forwards;
 }
 
 .char.extra {
   color: var(--incorrect);
   opacity: 0.7;
-  animation: charSlideIn 0.06s ease-out forwards, mistakeFlash 0.15s ease-out;
+  animation: charPopIn 0.12s cubic-bezier(0.16, 1, 0.3, 1) forwards, mistakeFlash 0.2s ease-out;
 }
 
 .char.pending {
   color: var(--fg-muted);
+  opacity: 0.4;
 }
 
 .char.missing {
   color: var(--incorrect);
   opacity: 0.5;
+  animation: charPopIn 0.15s ease-out forwards;
 }
 
 .space {
@@ -564,8 +578,8 @@ body {
   width: 2.5px;
   background: var(--current);
   border-radius: 2px;
-  animation: caretPulse 1s ease-in-out infinite;
-  box-shadow: 0 0 8px var(--current);
+  animation: caretBlink 1s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--current), 0 0 16px var(--current);
 }
 
 .char.caret-before::before { left: -1.25px; }
@@ -649,8 +663,19 @@ body {
   padding: 16px 20px;
   box-shadow:
     0 8px 24px -4px var(--shadow),
-    0 0 0 1px var(--border);
+    0 0 0 1px var(--border),
+    inset 0 1px 0 rgba(255,255,255,0.05);
   min-width: 180px;
+  animation: statsPulse 2s ease-in-out infinite;
+}
+
+.stats-card:hover {
+  border-color: var(--accent);
+  box-shadow:
+    0 12px 32px -4px var(--shadow),
+    0 0 0 1px var(--accent),
+    0 0 20px var(--accent-dim),
+    inset 0 1px 0 rgba(255,255,255,0.05);
 }
 
 .stat-row {
@@ -658,6 +683,17 @@ body {
   justify-content: space-between;
   align-items: baseline;
   gap: 16px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  transition: all 0.15s ease;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-row:hover .stat-value {
+  transform: scale(1.05);
 }
 
 .stat-label {
@@ -675,6 +711,7 @@ body {
   font-weight: 700;
   color: var(--fg);
   tabular-nums: true;
+  transition: transform 0.15s ease, color 0.15s ease;
 }
 
 .stat-value.accent { color: var(--accent); }

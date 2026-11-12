@@ -110,7 +110,7 @@ body.scroll-page { overflow-y: auto; }
   opacity: 0.75;
 }
 
-.word.error .char {
+.word.error > .char {
   text-decoration: underline;
   text-decoration-color: var(--incorrect);
   text-decoration-thickness: 2px;
