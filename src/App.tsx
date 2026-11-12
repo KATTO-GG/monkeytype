@@ -379,9 +379,40 @@ function StatsPanel({ stats }: { stats: Stats }) {
 }
 
 function KeyPressIndicator({ presses }: { presses: KeyPress[] }) {
-  return <div className="key-indicator" aria-hidden="true">
-    {presses.map((press, index) => <span key={index} className={press.status === 'correct' ? 'key-correct' : 'key-incorrect'}>{press.char}</span>)}
-  </div>
+  const last = presses[presses.length - 1]
+  if (!last) return null
+  return (
+    <div className="key-press-indicator" aria-hidden="true">
+      <span className={`key-press-bubble${last.status === 'incorrect' ? ' incorrect' : ''}`}>
+        {last.char === ' ' ? 'Space' : last.char}
+      </span>
+    </div>
+  )
+}
+
+function TypingStatsOverlay({ stats }: { stats: Stats }) {
+  return (
+    <div className="typing-stats-overlay" aria-hidden="true">
+      <div className="stats-card">
+        <div className="stat-row">
+          <span className="stat-label">WPM</span>
+          <span className="stat-value accent">{stats.wpm}</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-label">Raw</span>
+          <span className="stat-value">{stats.rawWpm}</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-label">Acc</span>
+          <span className="stat-value good">{stats.accuracy}%</span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-label">Consistency</span>
+          <span className="stat-value">{stats.consistency}%</span>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function Results({ stats, canSubmit, restart, submit }: { stats: Stats; canSubmit: boolean; restart: () => void; submit: () => void }) {
@@ -467,6 +498,7 @@ function TypingTest() {
       <StatsPanel stats={stats} />
       <div className="typing-area">
         <div className="progress">{mode.kind === 'time' ? timeLeft : `${Math.min(typed.length - 1, mode.value)}/${mode.value}`}</div>
+        <TypingStatsOverlay stats={stats} />
         <div className="words-container" role="group" aria-label="Typing area">
           <div className="words-window">
             <div className="words-inner" ref={innerRef} style={{ transform: `translateY(-${offset}px)` }}>
